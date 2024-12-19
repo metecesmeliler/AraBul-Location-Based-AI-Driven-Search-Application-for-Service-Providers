@@ -1,197 +1,278 @@
-import React, { useState, useEffect } from "react";
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  FlatList, 
-  TextInput, 
-  TouchableOpacity, 
-  SafeAreaView, 
-  KeyboardAvoidingView, 
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TextInput,
+  TouchableOpacity,
   Platform,
-  ActivityIndicator
+  ActivityIndicator,
+  Keyboard,
+  FlatListProps,
+  KeyboardAvoidingView,
+  ListRenderItemInfo,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
 } from "react-native";
-import { StackScreenProps } from '@react-navigation/stack';
-import { RootStackParamList, Message, ChatResponse } from '../types';
-import { chatService } from '../apiService';
+import { StackScreenProps } from "@react-navigation/stack";
+import { RootStackParamList, Message } from "../types";
+import { chatService } from "../apiService";
 
-type Props = StackScreenProps<RootStackParamList, 'Chat'>;
+type Props = StackScreenProps<RootStackParamList, "Chat">;
 
 const ChatScreen: React.FC<Props> = ({ navigation }) => {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState<string>('');
+  const [inputText, setInputText] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const flatListRef = useRef<FlatList>(null);
+  const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    // Initial system message
     const initialMessage: Message = {
-      id: '1',
-      text: 'Merhaba! Lütfen ne aradığını veya neye ihtiyacın olduğunu yaz.',
-      sender: 'system',
-      timestamp: Date.now()
+      id: "1",
+      text: "Merhaba! Lütfen ne aradığını veya neye ihtiyacın olduğunu yaz.",
+      sender: "system",
+      timestamp: Date.now(),
     };
     setMessages([initialMessage]);
-  }, []);
+
+    const keyboardDidShowListener = Keyboard.addListener(
+      'keyboardDidShow',
+      () => {
+        if (isAtBottom) {
+          scrollToBottom(true);
+        }
+      }
+    );
+
+    return () => {
+      keyboardDidShowListener.remove();
+    };
+  }, [isAtBottom]);
+
+  const scrollToBottom = useCallback((animated = false) => {
+    if (flatListRef.current && messages.length > 0) {
+      flatListRef.current.scrollToEnd({ animated });
+    }
+  }, [messages.length]);
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const paddingToBottom = 20;
+    const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= 
+      contentSize.height - paddingToBottom;
+    
+    setIsAtBottom(isCloseToBottom);
+  };
 
   const sendMessage = async () => {
-    if (inputText.trim() === '') return;
+    if (inputText.trim() === "") return;
 
-    // Add user message
     const userMessage: Message = {
       id: `${Date.now()}-user`,
-      text: inputText,
-      sender: 'user',
-      timestamp: Date.now()
+      text: inputText.trim(),
+      sender: "user",
+      timestamp: Date.now(),
     };
 
     setMessages(prevMessages => [...prevMessages, userMessage]);
-    setInputText('');
+    setInputText("");
     setIsLoading(true);
 
     try {
-      // Send message to backend
       const response = await chatService.sendMessage(inputText);
-
-      // Navigate to JSON display screen with the received data
-      navigation.navigate('BusinessList', { 
-        jsonData: JSON.stringify(response) 
+      navigation.navigate("BusinessList", {
+        jsonData: JSON.stringify(response),
       });
     } catch (error) {
-      // Add error message
       const errorMessage: Message = {
         id: `${Date.now()}-error`,
-        text: 'Üzgünüm, bir şeyler ters gitti.',
-        sender: 'system',
-        timestamp: Date.now()
+        text: "Üzgünüm, bir şeyler ters gitti.",
+        sender: "system",
+        timestamp: Date.now(),
       };
-
       setMessages(prevMessages => [...prevMessages, errorMessage]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const renderMessage = ({ item }: { item: Message }) => (
-    <View 
+  const renderMessage = useCallback(({ item }: ListRenderItemInfo<Message>) => (
+    <View
       style={[
-        styles.messageBubble, 
-        item.sender === 'system' 
-          ? styles.systemMessage 
-          : item.sender === 'user' 
-            ? styles.userMessage 
-            : styles.aiMessage
+        styles.messageBubble,
+        item.sender === "system"
+          ? styles.systemMessage
+          : item.sender === "user"
+          ? styles.userMessage
+          : styles.aiMessage,
       ]}
     >
       <Text style={styles.messageText}>{item.text}</Text>
     </View>
-  );
+  ), []);
+
+  const keyExtractor = useCallback((item: Message) => item.id, []);
+
+  const getItemLayout = useCallback((data: Message[] | null | undefined, index: number) => ({
+    length: 80, // Approximate height of each message
+    offset: 80 * index,
+    index,
+  }), []);
+
+  const handleContentSizeChange = useCallback(() => {
+    if (isAtBottom) {
+      scrollToBottom(true);
+    }
+  }, [isAtBottom, scrollToBottom]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <KeyboardAvoidingView 
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
+        style={styles.keyboardAvoidingView}
+        behavior={Platform.select({ android: undefined, ios: 'padding' })}
+        keyboardVerticalOffset={Platform.select({ ios: 64, android: 0 })}
       >
         <FlatList
+          ref={flatListRef}
           data={messages}
           renderItem={renderMessage}
-          keyExtractor={(item) => item.id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.messageList}
+          keyboardShouldPersistTaps="always"
+          keyboardDismissMode="none"
+          onScroll={handleScroll}
+          onContentSizeChange={handleContentSizeChange}
+          onLayout={handleContentSizeChange}
+          removeClippedSubviews={false}
+          maintainVisibleContentPosition={{
+            minIndexForVisible: 0,
+            autoscrollToTopThreshold: 10,
+          }}
+          windowSize={21} // Optimize rendering performance
+          initialNumToRender={15}
+          maxToRenderPerBatch={10}
+          updateCellsBatchingPeriod={50}
         />
-        
+
         {isLoading && (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="small" color="#0084ff" />
           </View>
         )}
-        
+
         <View style={styles.inputContainer}>
           <TextInput
+            ref={inputRef}
             style={styles.input}
             value={inputText}
             onChangeText={setInputText}
             placeholder="Bir mesaj gir"
             placeholderTextColor="#888"
             editable={!isLoading}
+            multiline
+            textAlignVertical="top"
+            autoCapitalize="sentences"
+            autoCorrect
+            returnKeyType="send"
+            onSubmitEditing={sendMessage}
+            enablesReturnKeyAutomatically
           />
-          <TouchableOpacity 
-            style={[
-              styles.sendButton, 
-              isLoading && styles.sendButtonDisabled
-            ]} 
+          <TouchableOpacity
+            style={[styles.sendButton, isLoading && styles.sendButtonDisabled]}
             onPress={sendMessage}
             disabled={isLoading}
+            activeOpacity={0.7}
           >
             <Text style={styles.sendButtonText}>Gönder</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: "#f5f5f5",
+  },
+  keyboardAvoidingView: {
+    flex: 1,
   },
   messageText: {
-    color: '#333',  // Dark gray color for better readability
-    fontSize: 16,   // Comfortable reading size
-    lineHeight: 22, // Slightly increased line height for better spacing
+    color: "#333",
+    fontSize: 16,
+    lineHeight: 22,
   },
   messageList: {
     padding: 10,
+    paddingBottom: 80,
   },
   messageBubble: {
-    maxWidth: '80%',
+    maxWidth: "80%",
     borderRadius: 10,
     padding: 10,
     marginVertical: 5,
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
+    elevation: 1,
   },
   systemMessage: {
-    backgroundColor: '#e0e0e0',
-    alignSelf: 'flex-start',
+    backgroundColor: "#e0e0e0",
+    alignSelf: "flex-start",
   },
   userMessage: {
-    backgroundColor: '#dcf8c6',
-    alignSelf: 'flex-end',
+    backgroundColor: "#dcf8c6",
+    alignSelf: "flex-end",
   },
   aiMessage: {
-    backgroundColor: '#e6f2ff',
-    alignSelf: 'flex-start',
+    backgroundColor: "#e6f2ff",
+    alignSelf: "flex-start",
   },
   loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    position: 'absolute',
+    top: '50%',
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    justifyContent: "center",
     paddingVertical: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
   },
   inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "flex-end",
     padding: 10,
-    backgroundColor: 'white',
+    backgroundColor: "white",
+    borderTopWidth: 1,
+    borderTopColor: "#ddd",
+    elevation: 3,
   },
   input: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: "#ddd",
     borderRadius: 20,
     paddingHorizontal: 15,
     paddingVertical: 10,
     marginRight: 10,
+    backgroundColor: "white",
+    maxHeight: 100,
+    minHeight: 40,
   },
   sendButton: {
-    backgroundColor: '#ffad00',
+    backgroundColor: "#ffad00",
     borderRadius: 20,
     paddingVertical: 10,
     paddingHorizontal: 15,
+    alignSelf: 'flex-end',
+    marginBottom: 1,
   },
   sendButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
+    color: "white",
+    fontWeight: "bold",
   },
   sendButtonDisabled: {
     opacity: 0.5,
