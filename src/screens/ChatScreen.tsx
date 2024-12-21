@@ -9,7 +9,6 @@ import {
   Platform,
   ActivityIndicator,
   Keyboard,
-  FlatListProps,
   KeyboardAvoidingView,
   ListRenderItemInfo,
   NativeScrollEvent,
@@ -26,10 +25,13 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
   const [inputText, setInputText] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [awaitingCity, setAwaitingCity] = useState<boolean>(false);
+  const [initialQuery, setInitialQuery] = useState<string>("");
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
+    // This effect only runs once when component mounts
     const initialMessage: Message = {
       id: "1",
       text: "Merhaba! Lütfen ne aradığını veya neye ihtiyacın olduğunu yaz.",
@@ -37,7 +39,16 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
       timestamp: Date.now(),
     };
     setMessages([initialMessage]);
+  }, []);
 
+  const scrollToBottom = useCallback((animated = false) => {
+    if (flatListRef.current && messages.length > 0) {
+      flatListRef.current.scrollToEnd({ animated });
+    }
+  }, [messages.length]);
+
+  useEffect(() => {
+    // This effect handles keyboard show events
     const keyboardDidShowListener = Keyboard.addListener(
       'keyboardDidShow',
       () => {
@@ -50,13 +61,7 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
     return () => {
       keyboardDidShowListener.remove();
     };
-  }, [isAtBottom]);
-
-  const scrollToBottom = useCallback((animated = false) => {
-    if (flatListRef.current && messages.length > 0) {
-      flatListRef.current.scrollToEnd({ animated });
-    }
-  }, [messages.length]);
+  }, [isAtBottom, scrollToBottom]);
 
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
@@ -78,25 +83,61 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
     };
 
     setMessages(prevMessages => [...prevMessages, userMessage]);
-    setInputText("");
-    setIsLoading(true);
-
-    try {
-      const response = await chatService.sendMessage(inputText);
-      navigation.navigate("BusinessList", {
-        jsonData: JSON.stringify(response),
-      });
-    } catch (error) {
-      const errorMessage: Message = {
-        id: `${Date.now()}-error`,
-        text: "Üzgünüm, bir şeyler ters gitti.",
+    
+    if (!awaitingCity) {
+      // Store the initial query and ask for city
+      setInitialQuery(inputText.trim());
+      const cityPrompt: Message = {
+        id: `${Date.now()}-system`,
+        text: "Lütfen bulunduğunuz şehri girin.",
         sender: "system",
         timestamp: Date.now(),
       };
-      setMessages(prevMessages => [...prevMessages, errorMessage]);
-    } finally {
-      setIsLoading(false);
+      setMessages(prevMessages => [...prevMessages, cityPrompt]);
+      setAwaitingCity(true);
+    } else {
+      // We have both the query and city, proceed with API call
+      setIsLoading(true);
+      try {
+        const messageWithCity = {
+          query: initialQuery,
+          city: inputText.trim()
+        };
+        const response = await chatService.sendMessage(JSON.stringify(messageWithCity));
+        
+        // Navigate to BusinessList
+        navigation.navigate("BusinessList", {
+          jsonData: JSON.stringify(response),
+        });
+        
+        // Add a new system message indicating we're ready for the next query
+        const newQueryPrompt: Message = {
+          id: `${Date.now()}-system`,
+          text: "Başka bir arama yapmak ister misiniz?",
+          sender: "system",
+          timestamp: Date.now(),
+        };
+        setMessages(prevMessages => [...prevMessages, newQueryPrompt]);
+        
+        // Reset only the query-related states
+        setAwaitingCity(false);
+        setInitialQuery("");
+      } catch (error) {
+        const errorMessage: Message = {
+          id: `${Date.now()}-error`,
+          text: "Üzgünüm, bir şeyler ters gitti.",
+          sender: "system",
+          timestamp: Date.now(),
+        };
+        setMessages(prevMessages => [...prevMessages, errorMessage]);
+        // Reset states on error
+        setAwaitingCity(false);
+        setInitialQuery("");
+      } finally {
+        setIsLoading(false);
+      }
     }
+    setInputText("");
   };
 
   const renderMessage = useCallback(({ item }: ListRenderItemInfo<Message>) => (
@@ -151,7 +192,7 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
             minIndexForVisible: 0,
             autoscrollToTopThreshold: 10,
           }}
-          windowSize={21} // Optimize rendering performance
+          windowSize={21}
           initialNumToRender={15}
           maxToRenderPerBatch={10}
           updateCellsBatchingPeriod={50}
@@ -169,7 +210,7 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
             style={styles.input}
             value={inputText}
             onChangeText={setInputText}
-            placeholder="Bir mesaj gir"
+            placeholder={awaitingCity ? "Şehrinizi girin" : "Bir mesaj gir"}
             placeholderTextColor="#888"
             editable={!isLoading}
             multiline

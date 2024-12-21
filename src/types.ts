@@ -4,26 +4,27 @@ export type RootStackParamList = {
   BusinessList: { jsonData: string };
 };
 
-export interface Message {
-  id: string;
-  text: string;
-  sender: 'system' | 'user' | 'ai';
-  timestamp: number;
+export interface ChatRequest {
+  query: string;
+  city: string;
 }
 
-export interface ChatRequest {
-  message: string;
+export interface SearchResult {
+  code: string;
+  description: string;
+  distance?: number;
+  city: string;
 }
 
 export interface ChatResponse {
+  results: SearchResult[];
+  original_query: string;
+  city: string;
+}
+
+export interface Message {
   id: string;
-  name: string;
-  age: number;
-  email: string;
-  address: {
-    street: string;
-    city: string;
-    country: string;
-  };
-  hobbies: string[];
+  text: string;
+  sender: string;
+  timestamp: number;
 }
