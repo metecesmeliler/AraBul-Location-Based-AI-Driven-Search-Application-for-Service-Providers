@@ -17,18 +17,21 @@ app.add_middleware(
 
 
 class ChatRequest(BaseModel):
-    message: str
+    query: str
+    city: str
 
 
 class SearchResult(BaseModel):
     code: str
     description: str
     distance: float = None
+    city: str
 
 
 class ChatResponse(BaseModel):
     results: list[SearchResult]
     original_query: str
+    city: str
 
 
 # Initialize local ChromaDB client
@@ -58,24 +61,27 @@ def semantic_search(query, collection, model, top_k=10):
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    results = semantic_search(request.message, collection, model)
+    print(request)
+    # Only use the query for search, but keep city in response
+    results = semantic_search(request.query, collection, model)
 
     search_results = []
     for i in range(len(results['ids'][0])):
         result = SearchResult(
             code=results['ids'][0][i],
             description=results['metadatas'][0][i]['description'],
-            distance=results['distances'][0][i] if 'distances' in results else None
+            distance=results['distances'][0][i] if 'distances' in results else None,
+            city=request.city  # Still include city in results
         )
         search_results.append(result)
 
     return ChatResponse(
         results=search_results,
-        original_query=request.message
+        original_query=request.query,
+        city=request.city
     )
 
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8000)
