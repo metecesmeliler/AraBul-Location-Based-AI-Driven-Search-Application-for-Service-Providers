@@ -17,6 +17,7 @@ export interface SearchResult {
 }
 
 export interface ChatResponse {
+  data: any;
   results: SearchResult[];
   original_query: string;
   city: string;

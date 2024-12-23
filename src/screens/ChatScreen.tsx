@@ -104,10 +104,10 @@ const ChatScreen: React.FC<Props> = ({ navigation }) => {
           city: inputText.trim()
         };
         const response = await chatService.sendMessage(JSON.stringify(messageWithCity));
-        
+     
         // Navigate to BusinessList
         navigation.navigate("BusinessList", {
-          jsonData: JSON.stringify(response),
+          jsonData: JSON.stringify(response.data),
         });
         
         // Add a new system message indicating we're ready for the next query
