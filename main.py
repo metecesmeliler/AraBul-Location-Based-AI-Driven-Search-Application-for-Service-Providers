@@ -2,7 +2,8 @@ import chromadb
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import SentenceTransformer
+import requests
 
 app = FastAPI()
 
@@ -15,24 +16,9 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-
 class ChatRequest(BaseModel):
     query: str
     city: str
-
-
-class SearchResult(BaseModel):
-    code: str
-    description: str
-    distance: float = None
-    city: str
-
-
-class ChatResponse(BaseModel):
-    results: list[SearchResult]
-    original_query: str
-    city: str
-
 
 # Initialize local ChromaDB client
 client = chromadb.PersistentClient(path="./chroma_database")
@@ -42,11 +28,10 @@ collection_name = "nace_codes"
 collection = client.get_or_create_collection(name=collection_name)
 
 # Load Sentence Transformer model
-model = SentenceTransformer("all-mpnet-base-v2")
-
+model = SentenceTransformer('./project_model')
 
 # Similarity search function
-def semantic_search(query, collection, model, top_k=10):
+def semantic_search(query, collection, model, top_k=3):
     # Generate query embedding
     query_embedding = model.encode(query).tolist()
 
@@ -58,29 +43,60 @@ def semantic_search(query, collection, model, top_k=10):
 
     return results
 
-
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    print(request)
-    # Only use the query for search, but keep city in response
-    results = semantic_search(request.query, collection, model)
+    print(f"Incoming request: {request}")
+    # Perform semantic search to find relevant NACE codes
+    try:
+        results = semantic_search(request.query, collection, model)
+        nace_codes = [
+            {"NaceCode": code}
+            for code in results["ids"][0]  # Extract NACE codes from ChromaDB results
+        ]
+    except Exception as e:
+        print(f"Error in semantic search: {e}")
+        return {"success": False, "error": "Semantic search failed."}
 
-    search_results = []
-    for i in range(len(results['ids'][0])):
-        result = SearchResult(
-            code=results['ids'][0][i],
-            description=results['metadatas'][0][i]['description'],
-            distance=results['distances'][0][i] if 'distances' in results else None,
-            city=request.city  # Still include city in results
+    # Prepare the request body to send to the external API
+    external_request_body = {
+        "NaceCodes": nace_codes,
+        "Cities": [
+            {
+                "City": request.city,
+                "Regions": []
+            }
+        ],
+        "NoofResults": 3,
+        "Page": 1
+    }
+
+    # External API URL
+    external_api_url = "https://arabul.swhotel.tech/supplierlist/"
+
+    try:
+        # Send a POST request to the external API with the prepared body
+        response = requests.post(
+            external_api_url,
+            json=external_request_body
         )
-        search_results.append(result)
+        response.raise_for_status()  # Raise an exception for HTTP errors
 
-    return ChatResponse(
-        results=search_results,
-        original_query=request.query,
-        city=request.city
-    )
+        # Parse the JSON response
+        external_response_data = response.json()
+        print(f"Response from external API: {external_response_data}")
 
+        # Return the response to the frontend
+        return {
+            "success": True,
+            "data": external_response_data
+        }
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error in external API request: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     import uvicorn
